@@ -15,17 +15,7 @@ case class User(id: String, name: String) {
   override def toString = s"User[id = $id - name = $name}"
 }
 
-object TestNode extends App {
-
-  implicit class IgniteFutureUtils[T](igniteFuture: IgniteFuture[T]) {
-    def toScalaFuture = {
-      val promise = Promise[T]()
-      igniteFuture.listen { k =>
-        promise.tryComplete(Try(k.get))
-      }
-      promise.future
-    }
-  }
+object TestDBNode extends App {
 
   val logger = LoggerFactory.getLogger("IgniteLog")
 
@@ -39,12 +29,10 @@ object TestNode extends App {
 
   cacheCfg.setCacheStoreFactory(FactoryBuilder.factoryOf(classOf[CachePostgresSlickStore]))
   cacheCfg.setReadThrough(true)
-  cacheCfg.setWriteThrough(true)
+  cacheCfg.setWriteThrough(false)
   cacheCfg.setBackups(1)
   cacheCfg.setCacheMode(CacheMode.REPLICATED)
   cacheCfg.setWriteBehindEnabled(true)
-  cacheCfg.setWriteBehindFlushThreadCount(Runtime.getRuntime.availableProcessors())
-
 
   config.setCacheConfiguration(cacheCfg)
 
@@ -53,17 +41,27 @@ object TestNode extends App {
   val usersCache = ignition.getOrCreateCache[String, User]("users_table")
 
 
-  val users = Seq(User("3", "gaston"), User("5", "joako"), User("6", "natalia natalia"))
-  users.foreach(user => usersCache.putIfAbsent(user.id, user))
+//  val users = Seq(User("12", "gaston"), User("16", "joako"), User("15", "natalia natalia"))
+//  users.foreach(user => usersCache.putIfAbsent(user.id, user))
 
   //usersCache.loadCache(null)
-  println(usersCache.get("4"))
-  println(usersCache.get("5"))
-  println(usersCache.get("6"))
+  println(usersCache.get("12"))
+  println(usersCache.get("16"))
+  println(usersCache.get("15"))
   println(usersCache.get("8"))
 
 
+  implicit class IgniteFutureUtils[T](igniteFuture: IgniteFuture[T]) {
+    def toScalaFuture = {
+      val promise = Promise[T]()
+      igniteFuture.listen { k =>
+        promise.tryComplete(Try(k.get))
+      }
+      promise.future
+    }
+  }
 
+  //usersCache.removeAsync("6").toScalaFuture
 //  val dos = Future {
 //    f.foreach(println)
 //  }

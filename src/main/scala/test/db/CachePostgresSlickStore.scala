@@ -10,7 +10,8 @@ import slick.{dbio, lifted}
 import test.dbconnections.PostgresSlickConnection
 import test.nodes.User
 
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.duration._
+import scala.concurrent.{Await, Future}
 import scala.util.{Failure, Success, Try}
 
 class CachePostgresSlickStore extends CacheStoreAdapter[String, User] with PostgresSlickConnection with Serializable {
@@ -96,24 +97,9 @@ class CachePostgresSlickStore extends CacheStoreAdapter[String, User] with Postg
 
 
   override def load(key: String): User = {
-    val loadedUser: Future[User] =
-      for {
-        u <- {
-          val p = Promise[User]()
-          pgDatabase.run(table.filter(_.id === key).result.head) onComplete {
-            case Success(user) => {
-              p.success(user)
-            }
-            case Failure(_) => p.success(null)
-          }
-          p.future
-        }
-      } yield {
-        u
-      }
-    loadedUser.value.map(user => user.get).getOrElse(null)
+    val loadedUser = pgDatabase.run(table.filter(_.id === key).result.headOption)
+    Await.result(loadedUser, 10 second).getOrElse(null)
   }
-
 
 
 }
