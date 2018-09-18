@@ -6,15 +6,25 @@ import com.typesafe.config.ConfigFactory
 import org.apache.ignite.cache.store.CacheStoreAdapter
 import org.apache.ignite.lang.IgniteBiInClosure
 import org.slf4j.LoggerFactory
-import slick.{dbio, lifted}
-import test.dbconnections.PostgresSlickConnection
-import test.nodes.User
+import slick.jdbc.PostgresProfile
+import slick.jdbc.PostgresProfile.api._
+import slick.lifted
+import test.nodes.Device
 
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.util.{Failure, Success, Try}
 
-class CachePostgresSlickStore extends CacheStoreAdapter[String, User] with PostgresSlickConnection with Serializable {
+trait PostgresSlickConnection {
+
+  val pgProfile = PostgresProfile.api
+
+  val pgDatabase = Database.forConfig("ignitePostgres")
+
+  val tableName: String
+}
+
+class CachePostgresSlickStore extends CacheStoreAdapter[String, Device] with PostgresSlickConnection with Serializable {
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -22,35 +32,30 @@ class CachePostgresSlickStore extends CacheStoreAdapter[String, User] with Postg
 
   val log = LoggerFactory.getLogger("IgniteLog")
 
-  val tableName = config.getString("user.tableName")
+  val tableName = "device_ignite_slick_table"
 
   import pgProfile._
 
-  private def txHandler(dbioAction: DBIOAction[Unit, NoStream, Effect.All with Effect.Transactional]) = {
-    val txHandler = dbioAction.asTry.flatMap {
-      case Failure(e: Throwable) => {
-        dbio.DBIO.failed(e)
-      }
-      case Success(s) => DBIO.successful(s)
-    }
-    txHandler
-  }
-
   //Slick
 
-  class UserTable(tag: Tag) extends Table[User](tag, Some("public"), tableName) {
+  class DeviceTable(tag: Tag) extends Table[Device](tag, Some("public"), tableName) {
+
     def id = column[String]("id")
 
-    def name = column[String]("name")
+    def metadata = column[String]("metadata")
 
-    def * = (id, name) <> (User.tupled, User.unapply)
+    def lat = column[Double]("lat")
+
+    def lon = column[Double]("lon")
+
+    def * = (id, metadata, lat, lon) <> (Device.tupled, Device.unapply)
 
     def pk = primaryKey(s"pk_$tableName", id)
 
     def uniqueIndex = index(s"idx_$table", id, unique = true)
   }
 
-  val table = lifted.TableQuery[UserTable]
+  val table = lifted.TableQuery[DeviceTable]
 
   val startup = createSchema
 
@@ -65,17 +70,17 @@ class CachePostgresSlickStore extends CacheStoreAdapter[String, User] with Postg
             _ <- table.schema.create
           } yield ()
           ).transactionally
-        pgDatabase.run(txHandler(dbioAction))
+        pgDatabase.run(dbioAction)
       }
     }
   }
 
-  override def loadCache(clo: IgniteBiInClosure[String, User], args: AnyRef*): Unit = {
+  override def loadCache(clo: IgniteBiInClosure[String, Device], args: AnyRef*): Unit = {
     for {
-      users <- pgDatabase.run(table.map(u => u).result) recoverWith { case _ => Future(Seq.empty[User]) }
+      devices <- pgDatabase.run(table.map(u => u).result) recoverWith { case _ => Future(Seq.empty[Device]) }
     } yield {
       log.info(s"Loading cache $tableName")
-      users.foreach(user => clo.apply(user.id, user))
+      devices.foreach(device => clo.apply(device.id, device))
     }
   }
 
@@ -84,19 +89,16 @@ class CachePostgresSlickStore extends CacheStoreAdapter[String, User] with Postg
     val dbioAction = DBIO.seq(
       table.filter(_.id === key.toString).delete
     ).transactionally
-    pgDatabase.run(txHandler(dbioAction))
+    pgDatabase.run(dbioAction)
   }
 
-  override def write(entry: Cache.Entry[_ <: String, _ <: User]): Unit = Try {
+  override def write(entry: Cache.Entry[_ <: String, _ <: Device]): Unit = Try {
     log.info(s"Insert into $tableName value ${entry.getValue.toString}")
-    val dbioAction = DBIO.seq(
-      table.insertOrUpdate(entry.getValue)
-    ).transactionally
-    pgDatabase.run(txHandler(dbioAction))
+    val dbioAction = DBIO.seq(table.insertOrUpdate(entry.getValue)).transactionally
+    pgDatabase.run(dbioAction)
   }
 
-
-  override def load(key: String): User = {
+  override def load(key: String): Device = {
     val loadedUser = pgDatabase.run(table.filter(_.id === key).result.headOption)
     Await.result(loadedUser, 10 second).getOrElse(null)
   }
