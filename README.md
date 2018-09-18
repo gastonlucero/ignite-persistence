@@ -1,8 +1,9 @@
-<h4> Build you own Apache Ignite persistence with Scala
+<h4> Build you own Apache Ignite persistence connector
 
 In previous post about Apache Ignite, we learn how to setup and create either a simple cache or sql cache, and share the 
-cached data between different apps
-In this post we  will go a little bit deeper, because, if our app crash, the cache disappears, so how ignite help us?
+cached data between different nodes.
+In this post we will go a little bit deeper, because, if our app crash, cached data disappears,how ignite help us to avoid
+this result?
 
 Let suppose that we are working on a real time iot application, designed to receive events from devices such as
 temperature devices, gps, or events from raspberry sensors.
@@ -23,7 +24,7 @@ store without boilerplate code?
 
 A simple example to show how it works (We will use Postgres has database, and Scala)
 
-Lets started , add the following dependencies in your build.sbt file:
+To get started, add the following dependencies in your build.sbt file:
 
     libraryDependencies ++= Seq(
        "org.apache.ignite" % "ignite-core" % "2.6.0",
@@ -33,12 +34,18 @@ Lets started , add the following dependencies in your build.sbt file:
 Then configure Ignite cache as usual, adding persistence properties
  
     val NativePersistence = "device_native"
+    
+Where data will be stored
+    
     val PersistencePath = "/tmp/ignite"
+    
+Where write-ahead log will be stored
+    
     val WalPath = "/tmp/wal"
     
     val config = new IgniteConfiguration()
 
-> WAL = write-ahead log 
+> The purpose of the WAL is to provide a recovery mechanism for scenarios where a single node or the whole cluster goes down
       
 In this section , we configure cache backup nodes, cache mode, and expiration policy for the data,for an overview
 check Partition and Replication on previous post 
@@ -49,7 +56,7 @@ check Partition and Replication on previous post
     cacheCfg.setWriteSynchronizationMode(CacheWriteSynchronizationMode.FULL_SYNC)
     cacheCfg.setExpiryPolicyFactory(CreatedExpiryPolicy.factoryOf(new javax.cache.expiry.Duration(TimeUnit.SECONDS, 30)))
   
-Here we say to Ignite, that we want to persist the cache , by enabling persistence
+Here, we say to Ignite, that we want to persist the cache , by enabling persistence
   
     val storageCfg = new DataStorageConfiguration()
     storageCfg.getDefaultDataRegionConfiguration().setPersistenceEnabled(true)
@@ -95,7 +102,7 @@ then the output look like this
     Get device Device[id = 2 - metadata = metadata 2 - lat = -35.7678515281638 - lon = -13.232386332299711}
     Get device Device[id = 3 - metadata = metadata 3 - lat = 11.884412857887412 - lon = 95.16134531018974}
 
-wait the time configured in expiry policy, and try again to see the results.
+wait expiry policy configured time , and try again to see the results.
 
 ######Baseline Topology
 If Ignite persistence is enabled, Ignite enforces the baseline topology concept which represents a set of server nodes 
@@ -120,26 +127,31 @@ disallowing any CRUD operations, you need to active the cluster:
 Great, we have our persistence data in a specific path, in each node, so if a device send an event we will enrich
 the message with static metadata, but ...
 
-Above mentioned that the user can persist devices metadata in a database,  if this is the case, then our native persistence
-has been "pre loaded" for database, and for every update , the application must update the database and refresh 
+Above I mentioned that the user can persist devices metadata in a database, if this is the case, then our native persistence
+has been "pre loaded" for database, and for every update,application must update the database and refresh the 
 associated value in the cache.
 
-Wait, if cache depends always on database, there is any possibility to associate database actions to cache??
+If cache depends always on database, there is any possibility to associate database actions to cache??
 Maybe Ignite has a way to put/load data into/from cache through database???  (Reminder : Postgres is the database)
 
 ######3rd Party Persistence
 
     import javax.cache.configuration.FactoryBuilder
     
-    val cacheCfg = new CacheConfiguration[String, User]("users_table")
+    val JdbcPersistence = "device_ignite_table"   
+    val cacheCfg = new CacheConfiguration[String, Device](JdbcPersistence)
     cacheCfg.setBackups(1)
     cacheCfg.setCacheMode(CacheMode.REPLICATED)
     
     cacheCfg.setCacheStoreFactory(FactoryBuilder.factoryOf(classOf[CacheJdbcStore]))
     cacheCfg.setReadThrough(true)
-    cacheCfg.setWriteThrough(false)  
+    cacheCfg.setWriteThrough(true)  
+    config.setCacheConfiguration(cacheCfg)
+    
+    val ignition = Ignition.start(config)
+    val jdbcCache = ignition.getOrCreateCache[String, Device](JdbcPersistence)
    
-CacheStoreFactory is our 3rd party persistence layer, from which, how access/read data form database to/from ignite is 
+CacheStoreFactory is our 3rd party persistence layer, from which, how access/read data form database to/from Ignite is 
 managed
 
     class CacheJdbcStore extends CacheStoreAdapter[String, User] ...
@@ -151,14 +163,16 @@ implementations for commons methods, such as
 - Write all
 - Delete all
 
+> Ignite provides `org.apache.ignite.cache.store.CacheStore` interface which extends both, `CacheLoader` and `CacheWrite
+
 ![CacheStore](https://files.readme.io/2b3807b-in_memory_data.png)
 
 In our example, we will use mostly, two of this methods, **write** and **load**
 
 Write method , related to `cacheCfg.setWriteThrough(true)`, when true means that put a value into cache, under the hood,
-calls write method, and when value is false, write it is never called.
+calls write method, when `cacheCfg.setWriteThrough(false)`, write it is never called.
 
-     override def write(entry: Cache.Entry[_ <: String, _ <: User]): Unit = {
+     override def write(entry: Cache.Entry[_ <: String, _ <: User]): Unit = {       
         val ps = connection.prepareStatement("INSERT INTO users_table (id,name) VALUES (?,?)")
         ps.setString(1, entry.getKey)
         ps.setString(2, entry.getValue.name)
@@ -176,7 +190,16 @@ The same with read, `cacheCfg.setReadThrough(true)`, when true, if the values is
           null
       } 
 
-With this approach, our cache could be always updated !! and depends the case, read or write from database is configurable.
+> In both cases table name is the same as cache name
+
+If we put some data in `jdbcCache'
+
+for (i <- 1 to 10) {
+    jdbcCache.put(i.toString, Device(i.toString, s"metadata $i", random(-90, 90), random(-180, 180)))
+  }
+
+ 
+With this approach, our cache could be always updated!! and depends the case, read or write from database is configurable.
 Besides this methods, cacheStore provides, `delete` and `loadCache. 
 Imagine, you can use postgres to save your app data, and maybe have a read only cache, for our dashboard view, as in the 
 example, or better a write only cache to put data in cache+postgres and read from read only cache.
@@ -195,6 +218,8 @@ It is possible to use this in a CQRS model?
 ######Related Links
 
 [Source Code](https://github.com/gastonlucero/ignite-persistence)
+
+[Backups](https://apacheignite.readme.io/docs/primary-and-backup-copies)
 
 [BaseLine Topology](https://apacheignite.readme.io/docs/baseline-topology)
 
