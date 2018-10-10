@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory
 import test.db.CacheJdbcStore
 
 import scala.concurrent.Promise
-import scala.util.{Random, Try}
+import scala.util.{Failure, Random, Success, Try}
 
 object TestPostgresSlickPersistence extends App {
 
@@ -39,10 +39,6 @@ object TestPostgresSlickPersistence extends App {
     min + (max - min) * r.nextDouble
   }
 
-  for (i <- 1 to 100) {
-    jdbcCache.put(i.toString, Device(i.toString, s"metadata $i", random(-90, 90), random(-180, 180)))
-  }
-
   implicit class IgniteFutureUtils[T](igniteFuture: IgniteFuture[T]) {
     def toScalaFuture = {
       val promise = Promise[T]()
@@ -53,31 +49,18 @@ object TestPostgresSlickPersistence extends App {
     }
   }
 
-  //usersCache.removeAsync("6").toScalaFuture
-  //  val dos = Future {
-  //    f.foreach(println)
-  //  }
-  //
-  //  val p = Promise[IgniteFuture[java.lang.Boolean]]()
-  //
-  //  val f = p.future
-  //
-  //  p.success(usersCache.removeAsync("6"))
-  //  f onComplete {
-  //    case Success(s) => s.get()
-  //    case Failure(f) => f.printStackTrace()
-  //  }
-  //
-  //
-  //  usersCache.removeAsync("6").listenAsync(ic => {
-  //    println(usersCache.get("6"))
-  //    ic.get()
-  //  }, ec)
-  //
-  //
-  //
-  //  Thread.sleep(10000)
-  //  System.exit(1)
+  for (i <- 1 to 100) {
+    jdbcCache.put(i.toString, Device(i.toString, s"metadata $i", random(-90, 90), random(-180, 180)))
+  }
+
+  for (i <- 1 to 100) {
+    println(jdbcCache.get(i.toString))
+  }
+
+  jdbcCache.removeAsync("1").toScalaFuture onComplete {
+    case Success(removed) => println(s"Removed = $removed")
+    case Failure(f) => println("Remove fail")
+  }
 }
 
 

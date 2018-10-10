@@ -99,8 +99,8 @@ class CachePostgresSlickStore extends CacheStoreAdapter[String, Device] with Pos
   }
 
   override def load(key: String): Device = {
-    val loadedUser = pgDatabase.run(table.filter(_.id === key).result.headOption)
-    Await.result(loadedUser, 10 second).getOrElse(null)
+    val loadedDevice = pgDatabase.run(table.filter(_.id === key).result.headOption)
+    Await.result(loadedDevice, 10 second).getOrElse(null)
   }
 
 

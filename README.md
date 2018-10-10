@@ -136,6 +136,8 @@ Maybe... Does Ignite have a way to put/load data into/from cache through a datab
 
 ######3rd Party Persistence
 
+> Note: Postgres > 9.x is required 
+
     import javax.cache.configuration.FactoryBuilder
     
     val JdbcPersistence = "device_ignite_table"   
@@ -154,7 +156,7 @@ Maybe... Does Ignite have a way to put/load data into/from cache through a datab
 CacheStoreFactory is our 3rd party persistence layer, in which, how to access/read data from the database to/from Ignite is 
 managed
 
-    class CacheJdbcStore extends CacheStoreAdapter[String, User] ...
+    class CacheJdbcStore extends CacheStoreAdapter[String, Device] ...
     
 If you want to define your cache store adapter, you just have to extend from CacheStoreAdapter[K,V] class, that provides
 implementations for commons methods, such as 
@@ -163,7 +165,7 @@ implementations for commons methods, such as
 - Write all
 - Delete all
 
-> Ignite provides `org.apache.ignite.cache.store.CacheStore` interface which extends both, `CacheLoader` and `CacheWrite
+> Ignite provides `org.apache.ignite.cache.store.CacheStore` interface which extends both, `CacheLoader` and `CacheWrite`
 
 ![CacheStore](https://files.readme.io/2b3807b-in_memory_data.png)
 
@@ -171,24 +173,31 @@ In our example, we will use, mostly, two of this methods: **write** and **load**
 
 Write method, related to `cacheCfg.setWriteThrough(true)`. Setting it as `true`, means putting a value into the cache but, under the hood,
 it calls write method. With it set to `false`, write method it's never called.
-
-    override def write(entry: Cache.Entry[_ <: String, _ <: User]): Unit = {       
-        val ps = connection.prepareStatement("INSERT INTO users_table (id,name) VALUES (?,?)")
+    
+      override def write(entry: Cache.Entry[_ <: String, _ <: Device]): Unit = Try {
+        // Must be an UPSERT
+        val ps = connection.prepareStatement("INSERT INTO device_ignite_table (id,metadata,lat,lon) VALUES (?,?,?,?)")
         ps.setString(1, entry.getKey)
-        ps.setString(2, entry.getValue.name)
-        ps.executeUpdate()     
-    }
+        ps.setString(2, entry.getValue.metadata)
+        ps.setDouble(3, entry.getValue.lat)
+        ps.setDouble(4, entry.getValue.lon)
+        ps.executeUpdate()
+      } match {
+        case Success(_) => println(s"Value put in table")
+        case Failure(f) => println(s"Insert error $f")
+      }
 
 The same with read, `cacheCfg.setReadThrough(true)`, with `true` value, if the values is not in cache then it will look for it in the database
 
-    override def load(key: String): User = {       
-        val ps = connection.prepareStatement(s"SELECT * FROM users_table where id = '$key'")
+    override def load(key: String): Device = {
+        println(s"load key $key")
+        val ps = connection.prepareStatement(s"SELECT * FROM device_ignite_table where id = '$key'")
         val rs = ps.executeQuery()
         if (rs.next())
-            User(rs.getString("id"), rs.getString("name"))
+          rsToDevice(rs)
         else
-            null
-    } 
+          null
+      }
 
 > In both cases, table name is the same as cache name
 

@@ -42,6 +42,10 @@ object TestPostgresPersistence extends App {
     jdbcCache.put(i.toString, Device(i.toString, s"metadata $i", random(-90, 90), random(-180, 180)))
   }
 
+  for (i <- 1 to 10) {
+    println(jdbcCache.get(i.toString))
+  }
+
   //delete record with id =1
   jdbcCache.remove("1")
 
